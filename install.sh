@@ -1,16 +1,16 @@
 #!/bin/bash
 #
 # Steam Deck OLED 120Hz Unlock - Installer
-# https://github.com/YOUR_USER/steamdeck-oled-120hz
+# https://github.com/2-X/steamdeck-oled-120hz
 #
 # Automatically detects your BOE OLED panel, extracts timing values,
 # and installs a gamescope Lua script to unlock 120Hz refresh rate.
 #
 # Usage:
-#   curl -sL https://raw.githubusercontent.com/YOUR_USER/steamdeck-oled-120hz/main/install.sh | bash
+#   curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash
 #
 # Or:
-#   git clone https://github.com/YOUR_USER/steamdeck-oled-120hz.git
+#   git clone https://github.com/2-X/steamdeck-oled-120hz.git
 #   cd steamdeck-oled-120hz
 #   ./install.sh
 

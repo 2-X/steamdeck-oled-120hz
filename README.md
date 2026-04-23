@@ -22,7 +22,7 @@ This is a pure Lua-based solution that:
 Open **Desktop Mode** → **Konsole** and run:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/YOUR_USER/steamdeck-oled-120hz/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash
 ```
 
 The installer will:
@@ -37,7 +37,7 @@ The installer will:
 If you prefer to review before running:
 
 ```bash
-git clone https://github.com/YOUR_USER/steamdeck-oled-120hz.git
+git clone https://github.com/2-X/steamdeck-oled-120hz.git
 cd steamdeck-oled-120hz
 ./install.sh
 ```
@@ -68,7 +68,7 @@ Visit https://www.testufo.com/framerates in a browser to visually confirm 120Hz.
 
 ### Option 1: Run the uninstaller
 ```bash
-curl -sL https://raw.githubusercontent.com/YOUR_USER/steamdeck-oled-120hz/main/uninstall.sh | bash
+curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/uninstall.sh | bash
 ```
 
 ### Option 2: Manual removal
