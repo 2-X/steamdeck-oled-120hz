@@ -13,8 +13,20 @@ if not boe then
     return
 end
 
--- Extend supported refresh rates from 91-120Hz
-for r = 91, 120 do
+-- ============================================================
+-- USER CONFIG
+-- ============================================================
+-- Top end of the refresh rate range. The SteamOS home screen / library
+-- always runs at the HIGHEST rate in this list, regardless of the QAM
+-- slider. So if the home screen colors look wrong at 120Hz, lower this.
+--   120 = panel max
+--   100-110 = common "best balance" (less OLED gamma drift)
+--   90 = effectively disables the unlock
+local MAX_REFRESH = __MAX_REFRESH__
+-- ============================================================
+
+-- Extend supported refresh rates from 91 up to MAX_REFRESH.
+for r = 91, MAX_REFRESH do
     table.insert(boe.dynamic_refresh_rates, r)
 end
 

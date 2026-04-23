@@ -32,6 +32,21 @@ The installer will:
 4. Install the unlock script
 5. Prompt you to reboot
 
+### Want a lower cap? (Reduces OLED gamma drift / fixes home screen colors)
+
+The SteamOS home screen / library always runs at the **highest** rate the script exposes — it doesn't honor the QAM slider. So if 120Hz makes the home screen colors look off (black crush, gamma shift), lower the cap at install time:
+
+```bash
+MAX_REFRESH=110 curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash
+```
+
+`MAX_REFRESH` accepts any integer from 91 to 120. Common picks:
+- `120` (default) — full panel max
+- `110` — best balance for most BOE units
+- `100` — very conservative, minimal gamma shift
+
+You can change it later by re-running the installer with a different value, or by editing the `MAX_REFRESH` line at the top of `~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua` and rebooting.
+
 ## Manual Install
 
 If you prefer to review before running:

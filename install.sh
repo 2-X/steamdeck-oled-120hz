@@ -25,6 +25,19 @@ NC='\033[0m'
 INSTALL_DIR="$HOME/.config/gamescope/scripts/99-user/displays"
 SCRIPT_NAME="oled-120hz.lua"
 
+# Top end of the refresh rate range to expose to gamescope. Override with:
+#   MAX_REFRESH=100 curl -sL https://.../install.sh | bash
+# Lower this if the SteamOS home screen / library colors look wrong - the
+# shell always picks the highest available rate, so this also caps the home
+# screen rate. 120 is the panel max; 100-110 is a common "best balance"
+# pick to reduce OLED gamma drift at the top end.
+MAX_REFRESH="${MAX_REFRESH:-120}"
+
+if ! [[ "$MAX_REFRESH" =~ ^[0-9]+$ ]] || [[ "$MAX_REFRESH" -lt 91 ]] || [[ "$MAX_REFRESH" -gt 120 ]]; then
+    echo "MAX_REFRESH must be an integer between 91 and 120 (got: $MAX_REFRESH)" >&2
+    exit 1
+fi
+
 info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
@@ -247,8 +260,20 @@ if not boe then
     return
 end
 
--- Extend supported refresh rates from 91-120Hz
-for r = 91, 120 do
+-- ============================================================
+-- USER CONFIG
+-- ============================================================
+-- Top end of the refresh rate range. The SteamOS home screen / library
+-- always runs at the HIGHEST rate in this list, regardless of the QAM
+-- slider. So if the home screen colors look wrong at 120Hz, lower this.
+--   120 = panel max
+--   100-110 = common "best balance" (less OLED gamma drift)
+--   90 = effectively disables the unlock
+local MAX_REFRESH = $MAX_REFRESH
+-- ============================================================
+
+-- Extend supported refresh rates from 91 up to MAX_REFRESH.
+for r = 91, MAX_REFRESH do
     table.insert(boe.dynamic_refresh_rates, r)
 end
 
@@ -260,8 +285,17 @@ local BOE_V_FP   = $V_FP
 local BOE_V_SYNC = $V_SYNC
 local BOE_V_BP   = $V_BP
 
--- Replace mode generator with variable-clock version
+-- Preserve Valve's stock modegen for refresh rates <= 90Hz so the existing
+-- 45-90Hz behavior stays bit-identical to a vanilla Deck. Without this
+-- guard we'd hijack the modegen for stock rates too, causing subtle gamma
+-- regressions reported by some BOE units even at 90Hz.
+local stock_modegen = boe.dynamic_modegen
+
 boe.dynamic_modegen = function(base_mode, refresh)
+    if refresh <= 90 and stock_modegen then
+        return stock_modegen(base_mode, refresh)
+    end
+
     if debug then
         debug("[oled-120hz] Generating " .. refresh .. "Hz mode for BOE OLED")
     end
@@ -303,6 +337,13 @@ echo "  3. Press the Quick Access button (... button below right trackpad)"
 echo "  4. Go to Performance tab (battery icon)"
 echo "  5. Set Performance Overlay Level to at least 1 to see your FPS/refresh"
 echo "  6. Scroll down to Refresh Rate slider - it should now go up to 120Hz"
+echo ""
+echo "Installed with MAX_REFRESH=$MAX_REFRESH"
+echo ""
+echo "If the home screen colors look off, lower the cap and reinstall:"
+echo "  MAX_REFRESH=110 curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash"
+echo ""
+echo "(The home screen always uses the MAX rate, not the QAM slider value.)"
 echo ""
 echo "To uninstall:"
 echo "  rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua"
