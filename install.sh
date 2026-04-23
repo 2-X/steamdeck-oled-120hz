@@ -381,19 +381,30 @@ local MAX_REFRESH = $MAX_REFRESH
 local HOME_REFRESH = $HOME_REFRESH
 -- ============================================================
 
--- Extend supported refresh rates from 91 up to MAX_REFRESH, but place
--- HOME_REFRESH at the end so gamescope uses it for the home screen.
--- This lets games select up to MAX_REFRESH while keeping the UI at a
--- potentially more stable rate.
+-- Gamescope uses the LAST entry in dynamic_refresh_rates as the idle/home
+-- target. The stock array ends at 90Hz. We need to rebuild the array so
+-- HOME_REFRESH ends up last, while all other rates (stock + extended) are
+-- available for games to select.
+
+-- Save stock rates and clear the array
+local stock_rates = {}
+for i, r in ipairs(panel.dynamic_refresh_rates) do
+    if r ~= HOME_REFRESH then
+        table.insert(stock_rates, r)
+    end
+end
+
+-- Rebuild: stock rates (minus HOME_REFRESH) + extended rates (minus HOME_REFRESH) + HOME_REFRESH
+panel.dynamic_refresh_rates = {}
+for _, r in ipairs(stock_rates) do
+    table.insert(panel.dynamic_refresh_rates, r)
+end
 for r = 91, MAX_REFRESH do
     if r ~= HOME_REFRESH then
         table.insert(panel.dynamic_refresh_rates, r)
     end
 end
--- HOME_REFRESH goes last - gamescope uses the final entry for idle/UI
-if HOME_REFRESH > 90 then
-    table.insert(panel.dynamic_refresh_rates, HOME_REFRESH)
-end
+table.insert(panel.dynamic_refresh_rates, HOME_REFRESH)
 
 -- Panel timing values (auto-detected from your hardware)
 local PANEL_H_FP   = $H_FP
