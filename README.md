@@ -103,7 +103,7 @@ This shouldn't happen with the Lua approach (unlike old binary patches), but if 
 
 Run this in Desktop Mode → Konsole:
 ```bash
-xxd -p -l 12 /sys/class/drm/card*-eDP-1/edid | tail -c 5 | head -c 2
+edid=$(xxd -p -l 12 /sys/class/drm/card*-eDP-1/edid | tr -d '\n'); echo ${edid:20:2}
 ```
 - `04` = BOE OLED (supported)
 - `03` = Samsung OLED (not supported - hardware limited)
