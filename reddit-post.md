@@ -13,17 +13,24 @@ Finally got 120Hz working on my OLED Limited Edition and it survives SteamOS upd
 curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash
 ```
 
-Reboot, then the refresh rate slider goes to 120Hz.
+Then run `sudo reboot`.
+
+**After reboot:**
+1. Press the **...** button (below right trackpad) to open Quick Access Menu
+2. Go to Performance tab (battery icon)
+3. Turn on Performance Overlay (set to 1+) so you can see your refresh rate
+4. Scroll down - Refresh Rate slider now goes to 120Hz
 
 **Requirements:**
-- BOE OLED panel only (all Limited Editions have BOE, some standard OLEDs too)
-- Installer auto-detects your panel and blocks Samsung panels (hardware limited to ~99Hz)
+- BOE OLED panel only (all Limited Editions, some standard OLEDs)
+- Installer auto-detects and blocks Samsung panels (they're hardware limited to ~99Hz)
 
 **Uninstall:**
 ```
-rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua && sudo reboot
+rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
+sudo reboot
 ```
 
-If screen goes black: hold power 10 sec, boot Desktop Mode, run the uninstall command.
+If screen goes black: hold power 10 sec, boot Desktop Mode (Volume Down + Power at startup), delete the script, reboot.
 
 GitHub: https://github.com/2-X/steamdeck-oled-120hz

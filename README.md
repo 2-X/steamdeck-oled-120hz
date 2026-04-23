@@ -44,25 +44,12 @@ cd steamdeck-oled-120hz
 
 ## After Installation
 
-1. **Reboot** your Steam Deck (required for gamescope to load the script)
-2. Switch to **Gaming Mode**
-3. Press **...** (Quick Access Menu) → **Performance** tab
-4. The **Refresh Rate** slider should now go up to **120Hz**
-
-## Verify It's Working
-
-### In Gaming Mode
-Check the Performance overlay (QAM → Performance → show overlay) - it should show your current refresh rate.
-
-### In Desktop Mode
-Run this command:
-```bash
-xrandr | grep eDP
-```
-You should see 120Hz modes listed.
-
-### UFO Test
-Visit https://www.testufo.com/framerates in a browser to visually confirm 120Hz.
+1. Run `sudo reboot`
+2. After reboot, you'll be in **Gaming Mode**
+3. Press the **Quick Access button** (the **...** button below the right trackpad)
+4. Go to the **Performance** tab (battery icon)
+5. Set **Performance Overlay Level** to at least **1** to see your FPS/refresh rate
+6. Scroll down to the **Refresh Rate** slider - it should now go up to **120Hz**
 
 ## Uninstall
 
@@ -81,12 +68,12 @@ sudo reboot
 
 ### Screen goes black after reboot
 1. Hold the **power button for 10 seconds** to force shutdown
-2. Turn on and boot to **Desktop Mode**
+2. Boot to **Desktop Mode**: hold **Volume Down + Power**, then select Desktop Mode from the boot menu
 3. Open Konsole and run:
    ```bash
    rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
    ```
-4. Reboot - your Deck will be back to normal
+4. Run `sudo reboot` - your Deck will be back to normal
 
 ### Slider still maxes at 90Hz
 - Make sure you **rebooted** after installation (switching modes isn't enough)
