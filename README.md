@@ -1,21 +1,21 @@
-# Steam Deck OLED 120Hz Unlock
+# Steam Deck OLED Refresh Rate Unlock
 
-Unlock 120Hz refresh rate on your **Steam Deck OLED** with the **BOE panel** (including Limited Edition models).
+Unlock higher refresh rates on your **Steam Deck OLED**:
+- **BOE panels**: Up to **120Hz**
+- **Samsung panels**: Up to **~96Hz** (automatically calculated safe max)
 
 This is a pure Lua-based solution that:
 - **Survives SteamOS updates** (no binary patching)
-- **Auto-detects your panel** and refuses to run on unsupported hardware
+- **Auto-detects your panel** (BOE or Samsung) and calculates safe limits
 - **Extracts your exact panel timings** for maximum compatibility
 - **Easy one-command install and uninstall**
 
 ## Requirements
 
-- Steam Deck OLED with **BOE panel** (product code 0x3004)
+- Steam Deck OLED with **BOE panel** (0x3004) or **Samsung panel** (0x3003)
   - All Limited Edition models have BOE panels
-  - Some standard OLED models also have BOE panels
+  - Standard OLED models may have either BOE or Samsung
 - **SteamOS 3.6 or newer**
-
-> **Samsung panel owners:** Your panel (0x3003) has hardware limitations above ~99Hz. This unlock will detect Samsung panels and refuse to install to protect your display.
 
 ## Quick Install
 
@@ -28,9 +28,12 @@ curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install
 The installer will:
 1. Verify you're on SteamOS 3.6+
 2. Detect your panel type (BOE/Samsung/LCD)
-3. Extract your panel's timing values
-4. Install the unlock script
-5. Prompt you to reboot
+3. Extract your panel's timing values and pixel clock
+4. **Calculate the safe max refresh rate for your specific panel**
+5. Install the unlock script
+6. Prompt you to reboot
+
+For **Samsung panels**, the installer automatically calculates a safe max (~96Hz) based on your panel's pixel clock with 10% headroom, giving you clean frame pacing multiples (96/48/24Hz) instead of the stock 90/45/22.5Hz.
 
 ### Want a lower cap? (Reduces OLED gamma drift / fixes home screen colors)
 
@@ -42,10 +45,19 @@ curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install
 
 > **Important:** The `MAX_REFRESH=110` MUST go on the `bash` side of the pipe, not before `curl`. If you write `MAX_REFRESH=110 curl ... | bash` the variable lives in `curl`'s environment and never reaches the install script — it'll silently fall back to 120.
 
-`MAX_REFRESH` accepts any integer from 91 to 120. Common picks:
+`MAX_REFRESH` accepts any integer from 91 up to your panel's safe max. Common picks:
+
+**BOE panels (safe max: 120Hz):**
 - `120` (default) — full panel max
 - `110` — best balance for most BOE units
 - `100` — very conservative, minimal gamma shift
+
+**Samsung panels (safe max: ~96Hz):**
+- Auto-calculated (default) — installer picks the safe max for your panel
+- `96` — clean multiples: 96/48/24Hz
+- `92` — even more conservative
+
+> **Note:** If you specify a `MAX_REFRESH` above your panel's calculated safe max, the installer will warn you and ask for confirmation.
 
 You can verify the value that actually got installed:
 ```bash
@@ -127,13 +139,25 @@ Run this in Desktop Mode → Konsole:
 ```bash
 edid=$(xxd -p -l 12 /sys/class/drm/card*-eDP-1/edid | tr -d '\n'); echo ${edid:20:2}
 ```
-- `04` = BOE OLED (supported)
-- `03` = Samsung OLED (not supported - hardware limited)
+- `04` = BOE OLED (supported — up to 120Hz)
+- `03` = Samsung OLED (supported — up to ~96Hz)
 - `01` = LCD (use [SteamDeck-RefreshRateUnlocker](https://github.com/ryanrudolfoba/SteamDeck-RefreshRateUnlocker) instead)
 
 ### Is this safe?
 
-Yes, for BOE panels. The BOE OLED panel is rated for higher refresh rates (theoretical max ~133Hz based on pixel clock capabilities). Samsung panels have tighter tolerances, which is why we block installation on those.
+**Yes, for both BOE and Samsung panels.** The installer calculates safe limits based on your panel's actual pixel clock:
+
+- **BOE panels** can handle up to ~133Hz theoretically (we cap at 120Hz)
+- **Samsung panels** have tighter pixel clock limits (~99MHz), so we calculate the max safe refresh rate from your specific panel's timings — typically around 96-99Hz
+
+The Samsung calculation uses your panel's 90Hz pixel clock plus 10% headroom, capped at 99Hz absolute maximum. This gives you the benefit of cleaner frame pacing multiples (96/48/24Hz vs 90/45/22.5Hz) without exceeding hardware limits.
+
+### Why would Samsung users want this?
+
+Even though Samsung panels can't reach 120Hz, going from 90Hz to 96Hz gives you:
+- **Clean frame pacing multiples**: 96Hz halves to 48Hz, quarters to 24Hz (all integers)
+- **vs stock 90Hz**: halves to 45Hz (odd), quarters to 22.5Hz (not even an integer)
+- This matters for games that sync to half or quarter refresh rates
 
 ### Will this void my warranty?
 
@@ -154,9 +178,22 @@ Previous 120Hz unlocks (like Nyaaori's) patched `/usr/bin/gamescope` directly. T
 ## Technical Details
 
 The unlock works by:
-1. Extending the `dynamic_refresh_rates` table to include 91-120Hz
-2. Replacing the BOE profile's `dynamic_modegen` function with a variable-clock version
-3. Using `calc_max_clock()` to compute the correct pixel clock for each refresh rate
+1. Detecting your panel type (BOE or Samsung) via EDID
+2. Extracting your panel's actual timing values and pixel clock from `modetest`
+3. **Calculating the safe max refresh rate** based on pixel clock headroom
+4. Extending the `dynamic_refresh_rates` table to include 91 up to the safe max
+5. Replacing the panel profile's `dynamic_modegen` function with a variable-clock version
+6. Using `calc_max_clock()` to compute the correct pixel clock for each refresh rate
+
+### Safe max calculation (Samsung panels)
+
+```
+max_clock = stock_90Hz_clock × 1.10  (10% headroom)
+safe_refresh = floor(max_clock / (htotal × vtotal))
+final_max = min(safe_refresh, 99)  (hard cap at 99Hz)
+```
+
+This ensures we never exceed the panel's pixel clock capabilities while giving users the maximum safe refresh rate.
 
 Stock gamescope uses a fixed-clock + variable-front-porch approach which mathematically caps at ~90Hz. Our approach adjusts the pixel clock directly (same technique used by the Zotac and LCD profiles).
 

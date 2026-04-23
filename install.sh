@@ -1,10 +1,11 @@
 #!/bin/bash
 #
-# Steam Deck OLED 120Hz Unlock - Installer
+# Steam Deck OLED Refresh Rate Unlock - Installer
 # https://github.com/2-X/steamdeck-oled-120hz
 #
-# Automatically detects your BOE OLED panel, extracts timing values,
-# and installs a gamescope Lua script to unlock 120Hz refresh rate.
+# Automatically detects your OLED panel (BOE or Samsung), extracts timing
+# values, calculates safe limits, and installs a gamescope Lua script to
+# unlock higher refresh rates.
 #
 # Usage:
 #   curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash
@@ -25,20 +26,22 @@ NC='\033[0m'
 INSTALL_DIR="$HOME/.config/gamescope/scripts/99-user/displays"
 SCRIPT_NAME="oled-120hz.lua"
 
+# Panel type detection (set later)
+PANEL_TYPE=""
+PANEL_MAX_CLOCK=""
+SAFE_MAX_REFRESH=""
+
 # Top end of the refresh rate range to expose to gamescope. Override with:
 #   curl -sL https://.../install.sh | MAX_REFRESH=100 bash
 # (Note: env var MUST go on the `bash` side of the pipe, not on `curl` -
 # otherwise it stays in curl's environment and never reaches this script.)
 # Lower this if the SteamOS home screen / library colors look wrong - the
 # shell always picks the highest available rate, so this also caps the home
-# screen rate. 120 is the panel max; 100-110 is a common "best balance"
-# pick to reduce OLED gamma drift at the top end.
-MAX_REFRESH="${MAX_REFRESH:-120}"
-
-if ! [[ "$MAX_REFRESH" =~ ^[0-9]+$ ]] || [[ "$MAX_REFRESH" -lt 91 ]] || [[ "$MAX_REFRESH" -gt 120 ]]; then
-    echo "MAX_REFRESH must be an integer between 91 and 120 (got: $MAX_REFRESH)" >&2
-    exit 1
-fi
+# screen rate.
+#
+# For BOE panels: 120 is the panel max; 100-110 is a common "best balance"
+# For Samsung panels: auto-calculated safe max (~96-99Hz based on pixel clock)
+MAX_REFRESH="${MAX_REFRESH:-}"
 
 info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
@@ -48,8 +51,8 @@ die()   { error "$*"; exit 1; }
 
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║       Steam Deck OLED 120Hz Unlock - Installer                ║"
-echo "║       For BOE OLED panels only (Limited Edition safe)         ║"
+echo "║       Steam Deck OLED Refresh Rate Unlock - Installer         ║"
+echo "║       Supports BOE (120Hz) and Samsung (up to ~96Hz) panels   ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -121,19 +124,12 @@ info "EDID product code: $PRODUCT_CODE"
 
 case "$PRODUCT_LO" in
     04)
+        PANEL_TYPE="boe"
         ok "BOE OLED panel detected - safe for 120Hz"
         ;;
     03)
-        echo ""
-        error "Samsung OLED panel detected (product code 0x3003)"
-        echo ""
-        echo "Samsung panels have hardware limitations above ~99Hz and may"
-        echo "exhibit visual artifacts or damage at 120Hz."
-        echo ""
-        echo "This unlock is only for BOE OLED panels (Steam Deck OLED"
-        echo "Limited Edition and some standard OLED units)."
-        echo ""
-        die "Installation aborted for your safety."
+        PANEL_TYPE="samsung"
+        ok "Samsung OLED panel detected - will calculate safe max refresh"
         ;;
     01)
         echo ""
@@ -148,14 +144,15 @@ case "$PRODUCT_LO" in
     *)
         warn "Unknown panel type (product code: $PRODUCT_CODE)"
         echo ""
-        echo "This script expects BOE OLED (0x3004). Your panel code is unknown."
-        echo "Proceeding may cause display issues."
+        echo "This script expects BOE OLED (0x3004) or Samsung OLED (0x3003)."
+        echo "Your panel code is unknown. Proceeding may cause display issues."
         echo ""
         read -p "Continue anyway? [y/N] " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             die "Installation aborted."
         fi
+        PANEL_TYPE="unknown"
         ;;
 esac
 
@@ -210,7 +207,7 @@ info "Raw timing data: $TIMINGS"
 # Parse modetest format:
 # #0 800x1280 90.06 800 818 822 858 1280 1288 1290 1320 102000 flags: ...
 # Fields: index resolution refresh hdisplay hss hse htot vdisplay vss vse vtot clock
-read -r _ _ _ HDISPLAY HSS HSE HTOTAL VDISPLAY VSS VSE VTOTAL _ <<< "$TIMINGS"
+read -r _ _ REFRESH_RATE HDISPLAY HSS HSE HTOTAL VDISPLAY VSS VSE VTOTAL PIXEL_CLOCK _ <<< "$TIMINGS"
 
 # Calculate timing parameters
 H_FP=$((HSS - HDISPLAY))
@@ -225,6 +222,7 @@ echo ""
 info "Calculated timing values:"
 echo "  Horizontal: FP=$H_FP  SYNC=$H_SYNC  BP=$H_BP  (total=$HTOTAL)"
 echo "  Vertical:   FP=$V_FP  SYNC=$V_SYNC  BP=$V_BP  (total=$VTOTAL)"
+echo "  Pixel clock at ${REFRESH_RATE}Hz: ${PIXEL_CLOCK} kHz"
 echo ""
 
 # Sanity check values
@@ -235,8 +233,80 @@ fi
 
 ok "Timing values extracted successfully"
 
-# --- Step 5: Generate and install the Lua script ---
-info "Installing 120Hz unlock script..."
+# --- Step 5: Calculate safe max refresh rate ---
+info "Calculating safe refresh rate limits..."
+
+# pixel_clock (kHz) = htotal * vtotal * refresh / 1000
+# refresh = pixel_clock * 1000 / (htotal * vtotal)
+TOTAL_PIXELS=$((HTOTAL * VTOTAL))
+
+if [[ "$PANEL_TYPE" == "boe" ]]; then
+    # BOE panels can handle up to ~133Hz theoretically, we cap at 120
+    SAFE_MAX_REFRESH=120
+    ok "BOE panel: safe max = 120Hz"
+elif [[ "$PANEL_TYPE" == "samsung" ]]; then
+    # Samsung panels are limited by pixel clock. We use a conservative 10% headroom
+    # above the stock 90Hz clock, capped at 99Hz absolute max.
+    # 
+    # Calculate: max_clock = stock_clock * 1.10 (10% headroom)
+    #            safe_refresh = floor(max_clock * 1000 / total_pixels)
+    #            final = min(safe_refresh, 99)
+    
+    # Stock clock with 10% headroom
+    MAX_CLOCK_KHZ=$(( (PIXEL_CLOCK * 110) / 100 ))
+    
+    # Calculate max refresh from that clock
+    # refresh = clock * 1000 / (htotal * vtotal)
+    # We need integer math, so: refresh = (clock * 1000) / total_pixels
+    CALC_MAX_REFRESH=$(( (MAX_CLOCK_KHZ * 1000) / TOTAL_PIXELS ))
+    
+    # Cap at 99Hz for Samsung (hard limit based on reported hardware constraints)
+    if [[ $CALC_MAX_REFRESH -gt 99 ]]; then
+        SAFE_MAX_REFRESH=99
+    else
+        SAFE_MAX_REFRESH=$CALC_MAX_REFRESH
+    fi
+    
+    ok "Samsung panel: calculated safe max = ${SAFE_MAX_REFRESH}Hz (based on ${PIXEL_CLOCK}kHz clock + 10% headroom, capped at 99)"
+else
+    # Unknown panel - be conservative, cap at 99Hz
+    SAFE_MAX_REFRESH=99
+    warn "Unknown panel: using conservative max = 99Hz"
+fi
+
+# Now validate/set MAX_REFRESH
+if [[ -z "$MAX_REFRESH" ]]; then
+    # No override specified, use calculated safe max
+    MAX_REFRESH=$SAFE_MAX_REFRESH
+    info "Using calculated safe max: MAX_REFRESH=$MAX_REFRESH"
+else
+    # User specified a value, validate it
+    if ! [[ "$MAX_REFRESH" =~ ^[0-9]+$ ]]; then
+        die "MAX_REFRESH must be an integer (got: $MAX_REFRESH)"
+    fi
+    
+    if [[ "$MAX_REFRESH" -lt 91 ]]; then
+        die "MAX_REFRESH must be at least 91 (got: $MAX_REFRESH)"
+    fi
+    
+    if [[ "$MAX_REFRESH" -gt "$SAFE_MAX_REFRESH" ]]; then
+        warn "MAX_REFRESH=$MAX_REFRESH exceeds calculated safe max ($SAFE_MAX_REFRESH) for your panel"
+        echo ""
+        echo "This may cause visual artifacts, black screen, or panel damage."
+        echo ""
+        read -p "Continue anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            die "Installation aborted. Use MAX_REFRESH=$SAFE_MAX_REFRESH or lower."
+        fi
+        warn "Proceeding with MAX_REFRESH=$MAX_REFRESH at your own risk"
+    else
+        ok "User override: MAX_REFRESH=$MAX_REFRESH (within safe range)"
+    fi
+fi
+
+# --- Step 6: Generate and install the Lua script ---
+info "Installing refresh rate unlock script..."
 
 mkdir -p "$INSTALL_DIR"
 
@@ -246,18 +316,28 @@ if [[ -f "$INSTALL_DIR/$SCRIPT_NAME" ]]; then
     cp "$INSTALL_DIR/$SCRIPT_NAME" "$INSTALL_DIR/${SCRIPT_NAME}.bak"
 fi
 
+# Determine which gamescope profile to use based on panel type
+if [[ "$PANEL_TYPE" == "samsung" ]]; then
+    GAMESCOPE_PROFILE="steamdeck_oled_sdc"
+    PROFILE_DISPLAY_NAME="Samsung OLED"
+else
+    GAMESCOPE_PROFILE="steamdeck_oled_boe"
+    PROFILE_DISPLAY_NAME="BOE OLED"
+fi
+
 cat > "$INSTALL_DIR/$SCRIPT_NAME" << LUAEOF
--- Steam Deck OLED (BOE) 120Hz unlock for gamescope (SteamOS 3.6+)
+-- Steam Deck OLED refresh rate unlock for gamescope (SteamOS 3.6+)
 -- Auto-generated by install.sh with your panel's exact timings.
 -- Uninstall: rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
 --
--- Only affects BOE OLED panels (EDID product=0x3004).
--- Samsung (SDC) and LCD panels are unaffected.
+-- Panel type: $PROFILE_DISPLAY_NAME
+-- Calculated safe max: ${SAFE_MAX_REFRESH}Hz
+-- Configured max: ${MAX_REFRESH}Hz
 
-local boe = gamescope.config.known_displays.steamdeck_oled_boe
-if not boe then
+local panel = gamescope.config.known_displays.$GAMESCOPE_PROFILE
+if not panel then
     if warn then
-        warn("[oled-120hz] steamdeck_oled_boe profile not found; skipping.")
+        warn("[oled-120hz] $GAMESCOPE_PROFILE profile not found; skipping.")
     end
     return
 end
@@ -267,46 +347,46 @@ end
 -- ============================================================
 -- Top end of the refresh rate range. The SteamOS home screen / library
 -- always runs at the HIGHEST rate in this list, regardless of the QAM
--- slider. So if the home screen colors look wrong at 120Hz, lower this.
---   120 = panel max
---   100-110 = common "best balance" (less OLED gamma drift)
---   90 = effectively disables the unlock
+-- slider. So if the home screen colors look wrong, lower this.
+--
+-- Panel: $PROFILE_DISPLAY_NAME
+-- Safe max for your panel: ${SAFE_MAX_REFRESH}Hz
 local MAX_REFRESH = $MAX_REFRESH
 -- ============================================================
 
 -- Extend supported refresh rates from 91 up to MAX_REFRESH.
 for r = 91, MAX_REFRESH do
-    table.insert(boe.dynamic_refresh_rates, r)
+    table.insert(panel.dynamic_refresh_rates, r)
 end
 
 -- Panel timing values (auto-detected from your hardware)
-local BOE_H_FP   = $H_FP
-local BOE_H_SYNC = $H_SYNC
-local BOE_H_BP   = $H_BP
-local BOE_V_FP   = $V_FP
-local BOE_V_SYNC = $V_SYNC
-local BOE_V_BP   = $V_BP
+local PANEL_H_FP   = $H_FP
+local PANEL_H_SYNC = $H_SYNC
+local PANEL_H_BP   = $H_BP
+local PANEL_V_FP   = $V_FP
+local PANEL_V_SYNC = $V_SYNC
+local PANEL_V_BP   = $V_BP
 
 -- Preserve Valve's stock modegen for refresh rates <= 90Hz so the existing
 -- 45-90Hz behavior stays bit-identical to a vanilla Deck. Without this
 -- guard we'd hijack the modegen for stock rates too, causing subtle gamma
--- regressions reported by some BOE units even at 90Hz.
-local stock_modegen = boe.dynamic_modegen
+-- regressions reported by some panels even at 90Hz.
+local stock_modegen = panel.dynamic_modegen
 
-boe.dynamic_modegen = function(base_mode, refresh)
+panel.dynamic_modegen = function(base_mode, refresh)
     if refresh <= 90 and stock_modegen then
         return stock_modegen(base_mode, refresh)
     end
 
     if debug then
-        debug("[oled-120hz] Generating " .. refresh .. "Hz mode for BOE OLED")
+        debug("[oled-120hz] Generating " .. refresh .. "Hz mode for $PROFILE_DISPLAY_NAME")
     end
 
     local mode = base_mode
 
     gamescope.modegen.set_resolution(mode, 800, 1280)
-    gamescope.modegen.set_h_timings(mode, BOE_H_FP, BOE_H_SYNC, BOE_H_BP)
-    gamescope.modegen.set_v_timings(mode, BOE_V_FP, BOE_V_SYNC, BOE_V_BP)
+    gamescope.modegen.set_h_timings(mode, PANEL_H_FP, PANEL_H_SYNC, PANEL_H_BP)
+    gamescope.modegen.set_v_timings(mode, PANEL_V_FP, PANEL_V_SYNC, PANEL_V_BP)
 
     mode.clock    = gamescope.modegen.calc_max_clock(mode, refresh)
     mode.vrefresh = gamescope.modegen.calc_vrefresh(mode)
@@ -315,7 +395,7 @@ boe.dynamic_modegen = function(base_mode, refresh)
 end
 
 if debug then
-    debug("[oled-120hz] BOE OLED 120Hz unlock active")
+    debug("[oled-120hz] $PROFILE_DISPLAY_NAME refresh unlock active (max: " .. MAX_REFRESH .. "Hz)")
 end
 LUAEOF
 
@@ -326,11 +406,15 @@ fi
 
 ok "Script installed to: $INSTALL_DIR/$SCRIPT_NAME"
 
-# --- Step 6: Done! ---
+# --- Step 7: Done! ---
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║                    Installation Complete!                     ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Panel type: $PROFILE_DISPLAY_NAME"
+echo "Safe max for your panel: ${SAFE_MAX_REFRESH}Hz"
+echo "Installed with MAX_REFRESH=$MAX_REFRESH"
 echo ""
 echo "Next steps:"
 echo "  1. Run: sudo reboot"
@@ -338,12 +422,15 @@ echo "  2. After reboot, you'll be in Gaming Mode"
 echo "  3. Press the Quick Access button (... button below right trackpad)"
 echo "  4. Go to Performance tab (battery icon)"
 echo "  5. Set Performance Overlay Level to at least 1 to see your FPS/refresh"
-echo "  6. Scroll down to Refresh Rate slider - it should now go up to 120Hz"
+echo "  6. Scroll down to Refresh Rate slider - it should now go up to ${MAX_REFRESH}Hz"
 echo ""
-echo "Installed with MAX_REFRESH=$MAX_REFRESH"
+if [[ "$PANEL_TYPE" == "samsung" ]]; then
+echo "Samsung panel detected! Your refresh rate is capped at ${MAX_REFRESH}Hz for safety."
+echo "This gives you clean frame pacing multiples (${MAX_REFRESH}/$((MAX_REFRESH/2))/$((MAX_REFRESH/4))Hz)."
 echo ""
+fi
 echo "If the home screen colors look off, lower the cap and reinstall:"
-echo "  curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=110 bash"
+echo "  curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=$((MAX_REFRESH - 4)) bash"
 echo ""
 echo "(The home screen always uses the MAX rate, not the QAM slider value."
 echo " The env var MUST go on the 'bash' side of the pipe, not on 'curl'.)"
