@@ -26,7 +26,9 @@ INSTALL_DIR="$HOME/.config/gamescope/scripts/99-user/displays"
 SCRIPT_NAME="oled-120hz.lua"
 
 # Top end of the refresh rate range to expose to gamescope. Override with:
-#   MAX_REFRESH=100 curl -sL https://.../install.sh | bash
+#   curl -sL https://.../install.sh | MAX_REFRESH=100 bash
+# (Note: env var MUST go on the `bash` side of the pipe, not on `curl` -
+# otherwise it stays in curl's environment and never reaches this script.)
 # Lower this if the SteamOS home screen / library colors look wrong - the
 # shell always picks the highest available rate, so this also caps the home
 # screen rate. 120 is the panel max; 100-110 is a common "best balance"
@@ -341,9 +343,10 @@ echo ""
 echo "Installed with MAX_REFRESH=$MAX_REFRESH"
 echo ""
 echo "If the home screen colors look off, lower the cap and reinstall:"
-echo "  MAX_REFRESH=110 curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash"
+echo "  curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=110 bash"
 echo ""
-echo "(The home screen always uses the MAX rate, not the QAM slider value.)"
+echo "(The home screen always uses the MAX rate, not the QAM slider value."
+echo " The env var MUST go on the 'bash' side of the pipe, not on 'curl'.)"
 echo ""
 echo "To uninstall:"
 echo "  rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua"

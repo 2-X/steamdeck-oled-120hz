@@ -37,15 +37,22 @@ The installer will:
 The SteamOS home screen / library always runs at the **highest** rate the script exposes — it doesn't honor the QAM slider. So if 120Hz makes the home screen colors look off (black crush, gamma shift), lower the cap at install time:
 
 ```bash
-MAX_REFRESH=110 curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=110 bash
 ```
+
+> **Important:** The `MAX_REFRESH=110` MUST go on the `bash` side of the pipe, not before `curl`. If you write `MAX_REFRESH=110 curl ... | bash` the variable lives in `curl`'s environment and never reaches the install script — it'll silently fall back to 120.
 
 `MAX_REFRESH` accepts any integer from 91 to 120. Common picks:
 - `120` (default) — full panel max
 - `110` — best balance for most BOE units
 - `100` — very conservative, minimal gamma shift
 
-You can change it later by re-running the installer with a different value, or by editing the `MAX_REFRESH` line at the top of `~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua` and rebooting.
+You can verify the value that actually got installed:
+```bash
+grep MAX_REFRESH ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
+```
+
+To change it later: re-run the installer with a different value, or edit that line directly in the installed file and reboot.
 
 ## Manual Install
 
