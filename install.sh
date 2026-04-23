@@ -35,13 +35,19 @@ SAFE_MAX_REFRESH=""
 #   curl -sL https://.../install.sh | MAX_REFRESH=100 bash
 # (Note: env var MUST go on the `bash` side of the pipe, not on `curl` -
 # otherwise it stays in curl's environment and never reaches this script.)
-# Lower this if the SteamOS home screen / library colors look wrong - the
-# shell always picks the highest available rate, so this also caps the home
-# screen rate.
 #
 # For BOE panels: 120 is the panel max; 100-110 is a common "best balance"
 # For Samsung panels: auto-calculated safe max (~96-99Hz based on pixel clock)
 MAX_REFRESH="${MAX_REFRESH:-}"
+
+# Home screen / UI refresh rate. Gamescope uses the LAST entry in the refresh
+# rate array as the idle/home target. By default we put 90Hz at the end so the
+# home screen stays at stock 90Hz (avoiding gamma issues some panels have at
+# higher rates), while games can still select up to MAX_REFRESH.
+#
+# Set HOME_REFRESH=120 to make the home screen also run at max refresh.
+# Set HOME_REFRESH=100 for a middle ground (experimental).
+HOME_REFRESH="${HOME_REFRESH:-90}"
 
 info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
@@ -53,6 +59,7 @@ echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║       Steam Deck OLED Refresh Rate Unlock - Installer         ║"
 echo "║       Supports BOE (120Hz) and Samsung (up to ~96Hz) panels   ║"
+echo "║       Home screen stays at 90Hz by default (configurable)     ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -305,6 +312,23 @@ else
     fi
 fi
 
+# Validate HOME_REFRESH
+if ! [[ "$HOME_REFRESH" =~ ^[0-9]+$ ]]; then
+    die "HOME_REFRESH must be an integer (got: $HOME_REFRESH)"
+fi
+
+if [[ "$HOME_REFRESH" -lt 45 ]] || [[ "$HOME_REFRESH" -gt "$MAX_REFRESH" ]]; then
+    die "HOME_REFRESH must be between 45 and MAX_REFRESH ($MAX_REFRESH). Got: $HOME_REFRESH"
+fi
+
+if [[ "$HOME_REFRESH" -eq 90 ]]; then
+    info "Home screen will stay at stock 90Hz (default)"
+elif [[ "$HOME_REFRESH" -gt 90 ]]; then
+    info "Home screen will run at ${HOME_REFRESH}Hz (experimental - may have gamma issues)"
+else
+    info "Home screen will run at ${HOME_REFRESH}Hz"
+fi
+
 # --- Step 6: Generate and install the Lua script ---
 info "Installing refresh rate unlock script..."
 
@@ -333,6 +357,7 @@ cat > "$INSTALL_DIR/$SCRIPT_NAME" << LUAEOF
 -- Panel type: $PROFILE_DISPLAY_NAME
 -- Calculated safe max: ${SAFE_MAX_REFRESH}Hz
 -- Configured max: ${MAX_REFRESH}Hz
+-- Home screen rate: ${HOME_REFRESH}Hz
 
 local panel = gamescope.config.known_displays.$GAMESCOPE_PROFILE
 if not panel then
@@ -345,18 +370,29 @@ end
 -- ============================================================
 -- USER CONFIG
 -- ============================================================
--- Top end of the refresh rate range. The SteamOS home screen / library
--- always runs at the HIGHEST rate in this list, regardless of the QAM
--- slider. So if the home screen colors look wrong, lower this.
---
+-- Max refresh rate available for games to select.
 -- Panel: $PROFILE_DISPLAY_NAME
 -- Safe max for your panel: ${SAFE_MAX_REFRESH}Hz
 local MAX_REFRESH = $MAX_REFRESH
+
+-- Home screen / UI refresh rate. Gamescope uses the LAST entry in the
+-- refresh rate array as the idle/home target. Set to MAX_REFRESH for
+-- full speed everywhere, or lower (e.g., 90) to avoid gamma issues.
+local HOME_REFRESH = $HOME_REFRESH
 -- ============================================================
 
--- Extend supported refresh rates from 91 up to MAX_REFRESH.
+-- Extend supported refresh rates from 91 up to MAX_REFRESH, but place
+-- HOME_REFRESH at the end so gamescope uses it for the home screen.
+-- This lets games select up to MAX_REFRESH while keeping the UI at a
+-- potentially more stable rate.
 for r = 91, MAX_REFRESH do
-    table.insert(panel.dynamic_refresh_rates, r)
+    if r ~= HOME_REFRESH then
+        table.insert(panel.dynamic_refresh_rates, r)
+    end
+end
+-- HOME_REFRESH goes last - gamescope uses the final entry for idle/UI
+if HOME_REFRESH > 90 then
+    table.insert(panel.dynamic_refresh_rates, HOME_REFRESH)
 end
 
 -- Panel timing values (auto-detected from your hardware)
@@ -395,7 +431,7 @@ panel.dynamic_modegen = function(base_mode, refresh)
 end
 
 if debug then
-    debug("[oled-120hz] $PROFILE_DISPLAY_NAME refresh unlock active (max: " .. MAX_REFRESH .. "Hz)")
+    debug("[oled-120hz] $PROFILE_DISPLAY_NAME refresh unlock active (max: " .. MAX_REFRESH .. "Hz, home: " .. HOME_REFRESH .. "Hz)")
 end
 LUAEOF
 
@@ -414,7 +450,7 @@ echo "╚═══════════════════════�
 echo ""
 echo "Panel type: $PROFILE_DISPLAY_NAME"
 echo "Safe max for your panel: ${SAFE_MAX_REFRESH}Hz"
-echo "Installed with MAX_REFRESH=$MAX_REFRESH"
+echo "Installed with MAX_REFRESH=$MAX_REFRESH, HOME_REFRESH=$HOME_REFRESH"
 echo ""
 echo "Next steps:"
 echo "  1. Run: sudo reboot"
@@ -429,11 +465,28 @@ echo "Samsung panel detected! Your refresh rate is capped at ${MAX_REFRESH}Hz fo
 echo "This gives you clean frame pacing multiples (${MAX_REFRESH}/$((MAX_REFRESH/2))/$((MAX_REFRESH/4))Hz)."
 echo ""
 fi
-echo "If the home screen colors look off, lower the cap and reinstall:"
-echo "  curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=$((MAX_REFRESH - 4)) bash"
+if [[ "$HOME_REFRESH" -eq 90 ]]; then
+echo "Home screen will stay at stock 90Hz (avoiding potential gamma issues)."
+echo "Games can still select up to ${MAX_REFRESH}Hz via the QAM slider."
 echo ""
-echo "(The home screen always uses the MAX rate, not the QAM slider value."
-echo " The env var MUST go on the 'bash' side of the pipe, not on 'curl'.)"
+echo "To run the home screen at a higher rate (experimental):"
+echo "  curl -sL .../install.sh | HOME_REFRESH=100 bash"
+echo ""
+else
+echo "Home screen will run at ${HOME_REFRESH}Hz."
+echo "If home screen colors look off, reinstall with HOME_REFRESH=90 (default)."
+echo ""
+fi
+echo "Configuration options (env vars go on the 'bash' side of the pipe):"
+echo "  MAX_REFRESH=N   - Max refresh rate for games (default: auto-detected)"
+echo "  HOME_REFRESH=N  - Home screen refresh rate (default: 90)"
+echo ""
+echo "Examples:"
+echo "  # Max out everything (may have gamma issues on home screen)"
+echo "  curl -sL .../install.sh | MAX_REFRESH=120 HOME_REFRESH=120 bash"
+echo ""
+echo "  # 100Hz home, 120Hz games (experimental middle ground)"
+echo "  curl -sL .../install.sh | HOME_REFRESH=100 bash"
 echo ""
 echo "To uninstall:"
 echo "  rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua"

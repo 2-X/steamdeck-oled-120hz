@@ -5,16 +5,18 @@ Unlock higher refresh rates on your **Steam Deck OLED**:
 - **Samsung panels**: Up to **~96Hz** (automatically calculated safe max)
 
 This is a pure Lua-based solution that:
-- **Survives SteamOS updates** (no binary patching)
+- **Survives SteamOS updates** (no binary patching required)
 - **Auto-detects your panel** (BOE or Samsung) and calculates safe limits
 - **Extracts your exact panel timings** for maximum compatibility
+- **No crashing issues** like the old binary patching method had
 - **Easy one-command install and uninstall**
 
 ## Requirements
 
 - Steam Deck OLED with **BOE panel** (0x3004) or **Samsung panel** (0x3003)
-  - All Limited Edition models have BOE panels
-  - Standard OLED models may have either BOE or Samsung
+  - **Limited Edition (orange thumbsticks, translucent shell)**: Always has BOE panel
+  - **Limited Edition (white)**: Has Samsung panel
+  - **Standard OLED**: May have either BOE or Samsung (check with command below)
 - **SteamOS 3.6 or newer**
 
 ## Quick Install
@@ -35,7 +37,9 @@ The installer will:
 
 For **Samsung panels**, the installer automatically calculates a safe max (~96Hz) based on your panel's pixel clock with 10% headroom, giving you clean frame pacing multiples (96/48/24Hz) instead of the stock 90/45/22.5Hz.
 
-### Want a lower cap? (Reduces OLED gamma drift / fixes home screen colors)
+### Want a lower cap? (Recommended for best color accuracy)
+
+**Important:** There is slight gamma shift on OLED panels above ~110Hz. For the best balance between extra FPS and color accuracy, **109-110Hz is recommended** for most BOE panels.
 
 The SteamOS home screen / library always runs at the **highest** rate the script exposes — it doesn't honor the QAM slider. So if 120Hz makes the home screen colors look off (black crush, gamma shift), lower the cap at install time:
 
@@ -49,13 +53,15 @@ curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install
 
 **BOE panels (safe max: 120Hz):**
 - `120` (default) — full panel max
-- `110` — best balance for most BOE units
+- `110` — **recommended** best balance for color accuracy vs refresh rate
 - `100` — very conservative, minimal gamma shift
 
 **Samsung panels (safe max: ~96Hz):**
 - Auto-calculated (default) — installer picks the safe max for your panel
 - `96` — clean multiples: 96/48/24Hz
 - `92` — even more conservative
+
+> **Note:** The panel physically supports these refresh rates. Valve likely capped it at 90Hz for consistency with Samsung panels, battery life concerns, and the slight gamma shift above ~110Hz.
 
 > **Note:** If you specify a `MAX_REFRESH` above your panel's calculated safe max, the installer will warn you and ask for confirmation.
 
@@ -143,6 +149,11 @@ edid=$(xxd -p -l 12 /sys/class/drm/card*-eDP-1/edid | tr -d '\n'); echo ${edid:2
 - `03` = Samsung OLED (supported — up to ~96Hz)
 - `01` = LCD (use [SteamDeck-RefreshRateUnlocker](https://github.com/ryanrudolfoba/SteamDeck-RefreshRateUnlocker) instead)
 
+**Quick guide by model:**
+- **Limited Edition (orange thumbsticks, translucent shell)**: BOE panel ✓
+- **Limited Edition (white)**: Samsung panel
+- **Standard OLED**: Run the command above to check
+
 ### Is this safe?
 
 **Yes, for both BOE and Samsung panels.** The installer calculates safe limits based on your panel's actual pixel clock:
@@ -171,11 +182,42 @@ No. Unlike binary patches, this Lua script lives in your user config directory (
 
 Yes, they're independent. This script runs at the gamescope level, not through Decky.
 
+### What about battery life?
+
+Higher refresh rate = more power draw. Expect roughly **10-15% less playtime** at 120Hz compared to 90Hz, depending on the game. You can always lower the refresh rate via the QAM slider to save battery when needed.
+
+As for battery health/lifespan, the extra charge cycles from shorter playtime are negligible. Just don't leave your Deck at 100% charge for extended periods.
+
+### Does VRR/frame pacing still work?
+
+Yes. Gamescope's Variable Refresh Rate logic handles this automatically. The script only extends the available refresh rates (adding 91-120Hz to the existing 45-90Hz range) — it doesn't interfere with the refresh rate selection logic.
+
+For example:
+- 60 FPS limiter → gamescope can pick 60Hz (stock) or 120Hz (extended)
+- 40 FPS limiter → gamescope uses 40Hz or 80Hz (stock), or 120Hz (extended)
+
+The smart refresh selection that finds clean multiples of your FPS is handled by gamescope's core logic.
+
+### Why does Desktop Mode stay at 90Hz?
+
+Desktop Mode displays at whatever modes the panel natively advertises via EDID, which for the BOE OLED is 90Hz max. The unlock only works in Gaming Mode where gamescope can use the Lua scripting system.
+
+### Can I use this on Windows?
+
+No. Windows on Steam Deck doesn't use gamescope, so this Lua script won't work. You'd need a different approach like Custom Resolution Utility (CRU) or a custom EDID override. The panel hardware supports higher refresh rates, so it should be theoretically possible.
+
 ### Why Lua instead of binary patching?
 
 Previous 120Hz unlocks (like Nyaaori's) patched `/usr/bin/gamescope` directly. This broke with every SteamOS update and caused DirectX errors on newer versions. The Lua approach uses gamescope's official scripting system and is future-proof.
 
 ## Technical Details
+
+The 90Hz "rating" is a software limit Valve set, not a hardware limit. The BOE OLED panel physically supports higher refresh rates — its pixel clock can handle up to ~133Hz theoretically.
+
+Valve likely capped it at 90Hz because:
+1. The Samsung OLED variant is hardware-limited to ~99Hz and they wanted consistency
+2. Battery life concerns
+3. Slight gamma shift above ~110Hz on OLED
 
 The unlock works by:
 1. Detecting your panel type (BOE or Samsung) via EDID
@@ -184,6 +226,8 @@ The unlock works by:
 4. Extending the `dynamic_refresh_rates` table to include 91 up to the safe max
 5. Replacing the panel profile's `dynamic_modegen` function with a variable-clock version
 6. Using `calc_max_clock()` to compute the correct pixel clock for each refresh rate
+
+The bandwidth math works out fine: 800×1280×24bpp×120Hz is only ~3 Gbps, well within eDP spec.
 
 ### Safe max calculation (Samsung panels)
 
