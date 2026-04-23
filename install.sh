@@ -315,9 +315,14 @@ echo "  - Boot to Desktop Mode"
 echo "  - Delete the script file and reboot"
 echo ""
 
-read -p "Reboot now? [Y/n] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    info "Rebooting..."
-    sudo reboot
+# Only prompt if running interactively (not piped)
+if [[ -t 0 ]]; then
+    read -p "Reboot now? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        info "Rebooting..."
+        sudo reboot
+    fi
+else
+    echo "Run 'sudo reboot' when ready."
 fi
