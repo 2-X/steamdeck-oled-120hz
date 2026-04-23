@@ -26,8 +26,17 @@ local BOE_V_FP   = __V_FP__
 local BOE_V_SYNC = __V_SYNC__
 local BOE_V_BP   = __V_BP__
 
--- Replace mode generator with variable-clock version
+-- Preserve Valve's stock modegen for refresh rates <= 90Hz so the
+-- existing 45-90Hz behavior (color, gamma, timings) stays bit-identical
+-- to a vanilla Deck. Only the new 91-120Hz path uses our variable-clock
+-- math.
+local stock_modegen = boe.dynamic_modegen
+
 boe.dynamic_modegen = function(base_mode, refresh)
+    if refresh <= 90 and stock_modegen then
+        return stock_modegen(base_mode, refresh)
+    end
+
     if debug then
         debug("[oled-120hz] Generating " .. refresh .. "Hz mode for BOE OLED")
     end
