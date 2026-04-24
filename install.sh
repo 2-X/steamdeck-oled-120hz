@@ -48,6 +48,18 @@ MAX_REFRESH="${MAX_REFRESH:-}"
 # Default is set after panel detection.
 HOME_REFRESH="${HOME_REFRESH:-}"
 
+# EXPERIMENTAL: Samsung panel modegen approach. Some Samsung panels show
+# pixelation artifacts at overclocked refresh rates. Try different approaches:
+#   - "clock" (default): Variable pixel clock, fixed blanking intervals
+#   - "vfp": Variable front porch + slight clock boost (like ROG Ally)
+#   - "hybrid": Blend of both approaches with smaller clock increase
+#   - "stock": Don't override modegen at all, only extend refresh rates
+#   - "hblank": Reduce horizontal blanking to keep clock lower (experimental)
+#   - "round": Round pixel clock to nearest MHz (cleaner PLL lock)
+#
+# Usage: curl -sL .../install.sh | SAMSUNG_MODE=vfp bash
+SAMSUNG_MODE="${SAMSUNG_MODE:-clock}"
+
 info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
@@ -349,6 +361,18 @@ else
     info "Home screen will run at ${HOME_REFRESH}Hz"
 fi
 
+# Validate SAMSUNG_MODE (only matters for Samsung panels but validate anyway)
+case "$SAMSUNG_MODE" in
+    clock|vfp|hybrid|stock|hblank|round)
+        if [[ "$PANEL_TYPE" == "samsung" ]]; then
+            info "Samsung modegen mode: $SAMSUNG_MODE"
+        fi
+        ;;
+    *)
+        die "SAMSUNG_MODE must be one of: clock, vfp, hybrid, stock, hblank, round (got: $SAMSUNG_MODE)"
+        ;;
+esac
+
 # --- Step 6: Generate and install the Lua script ---
 info "Installing refresh rate unlock script..."
 
@@ -497,17 +521,135 @@ local PANEL_V_BP   = $V_BP
 -- regressions reported by some panels even at 90Hz.
 local stock_modegen = panel.dynamic_modegen
 
+-- Samsung panel modegen mode (experimental options for pixelation fix)
+local SAMSUNG_MODE = "$SAMSUNG_MODE"
+
 panel.dynamic_modegen = function(base_mode, refresh)
     if refresh <= 90 and stock_modegen then
         return stock_modegen(base_mode, refresh)
     end
 
-    if debug then
-        debug("[oled-120hz] Generating " .. refresh .. "Hz mode for $PROFILE_DISPLAY_NAME")
+    local mode = base_mode
+    local is_samsung = ("$PANEL_TYPE" == "samsung")
+    
+    -- "stock" mode: don't override modegen at all, let gamescope handle it
+    if is_samsung and SAMSUNG_MODE == "stock" then
+        if stock_modegen then
+            if debug then
+                debug("[oled-120hz] Samsung stock mode: using original modegen for " .. refresh .. "Hz")
+            end
+            return stock_modegen(base_mode, refresh)
+        end
+    end
+    
+    -- Calculate common values
+    local htotal = 800 + PANEL_H_FP + PANEL_H_SYNC + PANEL_H_BP
+    local base_vtotal = 1280 + PANEL_V_FP + PANEL_V_SYNC + PANEL_V_BP
+    local stock_clock = math.floor((htotal * base_vtotal * 90) / 1000)
+    
+    -- "vfp" mode: Variable front porch with minimal clock boost (like ROG Ally)
+    if is_samsung and SAMSUNG_MODE == "vfp" then
+        -- Boost clock by only 5-7% instead of full calc_max_clock
+        local boosted_clock = math.floor(stock_clock * 1.07)
+        local target_vtotal = math.floor((boosted_clock * 1000) / (htotal * refresh))
+        local new_vfp = target_vtotal - 1280 - PANEL_V_SYNC - PANEL_V_BP
+        
+        if new_vfp >= 2 then
+            gamescope.modegen.set_resolution(mode, 800, 1280)
+            gamescope.modegen.set_h_timings(mode, PANEL_H_FP, PANEL_H_SYNC, PANEL_H_BP)
+            gamescope.modegen.set_v_timings(mode, new_vfp, PANEL_V_SYNC, PANEL_V_BP)
+            mode.clock = boosted_clock
+            mode.vrefresh = gamescope.modegen.calc_vrefresh(mode)
+            
+            if debug then
+                debug("[oled-120hz] Samsung VFP mode: " .. refresh .. "Hz clock=" .. boosted_clock .. " vfp=" .. new_vfp)
+            end
+            return mode
+        end
+    end
+    
+    -- "hybrid" mode: Smaller clock increase + reduced blanking
+    if is_samsung and SAMSUNG_MODE == "hybrid" then
+        -- Split the difference: 50% from clock increase, 50% from blanking reduction
+        local full_clock = gamescope.modegen.calc_max_clock(base_mode, refresh)
+        local partial_clock = math.floor(stock_clock + (full_clock - stock_clock) * 0.5)
+        
+        -- Calculate VFP needed at partial clock
+        local target_vtotal = math.floor((partial_clock * 1000) / (htotal * refresh))
+        local new_vfp = target_vtotal - 1280 - PANEL_V_SYNC - PANEL_V_BP
+        
+        if new_vfp >= 2 then
+            gamescope.modegen.set_resolution(mode, 800, 1280)
+            gamescope.modegen.set_h_timings(mode, PANEL_H_FP, PANEL_H_SYNC, PANEL_H_BP)
+            gamescope.modegen.set_v_timings(mode, new_vfp, PANEL_V_SYNC, PANEL_V_BP)
+            mode.clock = partial_clock
+            mode.vrefresh = gamescope.modegen.calc_vrefresh(mode)
+            
+            if debug then
+                debug("[oled-120hz] Samsung hybrid mode: " .. refresh .. "Hz clock=" .. partial_clock .. " vfp=" .. new_vfp)
+            end
+            return mode
+        end
+    end
+    
+    -- "hblank" mode: Reduce horizontal blanking to minimize clock increase
+    -- This keeps each scanline's timing closer to stock, which may help with
+    -- horizontal line offset issues
+    if is_samsung and SAMSUNG_MODE == "hblank" then
+        -- Reduce H_FP and H_BP proportionally to lower htotal
+        -- This allows same refresh at lower clock
+        local refresh_ratio = refresh / 90
+        local target_clock = math.floor(stock_clock * 1.03)  -- Only 3% clock increase
+        
+        -- Calculate htotal needed at this clock
+        local target_htotal = math.floor((target_clock * 1000) / (base_vtotal * refresh))
+        local h_blank_total = target_htotal - 800
+        
+        -- Distribute blanking: keep sync same, split remainder between FP and BP
+        local new_h_fp = math.max(4, math.floor(h_blank_total * 0.3))
+        local new_h_bp = math.max(4, h_blank_total - new_h_fp - PANEL_H_SYNC)
+        local actual_htotal = 800 + new_h_fp + PANEL_H_SYNC + new_h_bp
+        
+        if new_h_fp >= 4 and new_h_bp >= 4 then
+            gamescope.modegen.set_resolution(mode, 800, 1280)
+            gamescope.modegen.set_h_timings(mode, new_h_fp, PANEL_H_SYNC, new_h_bp)
+            gamescope.modegen.set_v_timings(mode, PANEL_V_FP, PANEL_V_SYNC, PANEL_V_BP)
+            mode.clock = target_clock
+            mode.vrefresh = gamescope.modegen.calc_vrefresh(mode)
+            
+            if debug then
+                debug("[oled-120hz] Samsung hblank mode: " .. refresh .. "Hz clock=" .. target_clock .. 
+                      " h_fp=" .. new_h_fp .. " h_bp=" .. new_h_bp)
+            end
+            return mode
+        end
+    end
+    
+    -- "round" mode: Round pixel clock to nearest MHz for cleaner PLL lock
+    -- Some panels have trouble locking to arbitrary clock frequencies
+    if is_samsung and SAMSUNG_MODE == "round" then
+        local exact_clock = gamescope.modegen.calc_max_clock(base_mode, refresh)
+        -- Round to nearest 1000 kHz (1 MHz)
+        local rounded_clock = math.floor((exact_clock + 500) / 1000) * 1000
+        
+        gamescope.modegen.set_resolution(mode, 800, 1280)
+        gamescope.modegen.set_h_timings(mode, PANEL_H_FP, PANEL_H_SYNC, PANEL_H_BP)
+        gamescope.modegen.set_v_timings(mode, PANEL_V_FP, PANEL_V_SYNC, PANEL_V_BP)
+        mode.clock = rounded_clock
+        mode.vrefresh = gamescope.modegen.calc_vrefresh(mode)
+        
+        if debug then
+            debug("[oled-120hz] Samsung round mode: " .. refresh .. "Hz exact_clock=" .. exact_clock .. 
+                  " rounded_clock=" .. rounded_clock)
+        end
+        return mode
     end
 
-    local mode = base_mode
-
+    -- Default "clock" mode: Full clock increase, fixed blanking (original approach)
+    if debug then
+        debug("[oled-120hz] Generating " .. refresh .. "Hz mode for $PROFILE_DISPLAY_NAME (clock mode)")
+    end
+    
     gamescope.modegen.set_resolution(mode, 800, 1280)
     gamescope.modegen.set_h_timings(mode, PANEL_H_FP, PANEL_H_SYNC, PANEL_H_BP)
     gamescope.modegen.set_v_timings(mode, PANEL_V_FP, PANEL_V_SYNC, PANEL_V_BP)
@@ -552,6 +694,15 @@ echo ""
 if [[ "$PANEL_TYPE" == "samsung" ]]; then
 echo "Samsung panel detected! Your refresh rate is capped at ${MAX_REFRESH}Hz for safety."
 echo "This gives you clean frame pacing multiples (${MAX_REFRESH}/$((MAX_REFRESH/2))/$((MAX_REFRESH/4))Hz)."
+echo ""
+echo "Modegen mode: $SAMSUNG_MODE"
+echo "If you see pixelation/aliasing (horizontal line offset), try different modes:"
+echo "  SAMSUNG_MODE=round   - Round clock to nearest MHz (try this first!)"
+echo "  SAMSUNG_MODE=hblank  - Reduce horizontal blanking (minimal clock change)"
+echo "  SAMSUNG_MODE=vfp     - Variable front porch (less clock change)"
+echo "  SAMSUNG_MODE=hybrid  - Blend of clock + VFP adjustment"  
+echo "  SAMSUNG_MODE=stock   - Use original gamescope modegen"
+echo "  SAMSUNG_MODE=clock   - Full clock increase (default)"
 echo ""
 fi
 if [[ "$HOME_REFRESH" -eq "$DEFAULT_HOME_REFRESH" ]]; then
