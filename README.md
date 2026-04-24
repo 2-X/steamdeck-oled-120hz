@@ -1,23 +1,29 @@
-# Steam Deck OLED Refresh Rate Unlock
+# Steam Deck Refresh Rate Unlock
 
-Unlock higher refresh rates on your **Steam Deck OLED**:
-- **BOE panels**: Up to **120Hz**
-- **Samsung panels**: Up to **~96Hz** (automatically calculated safe max)
+Unlock higher refresh rates on your **Steam Deck**:
+- **OLED (BOE panel)**: Up to **120Hz**
+- **OLED (Samsung panel)**: Up to **~96Hz** (automatically calculated safe max)
+- **LCD**: Up to **70Hz**
 
 This is a pure Lua-based solution that:
 - **Survives SteamOS updates** (no binary patching required)
-- **Auto-detects your panel** (BOE or Samsung) and calculates safe limits
-- **Extracts your exact panel timings** for maximum compatibility
+- **Auto-detects your panel** (BOE, Samsung, or LCD) and calculates safe limits
+- **Extracts your exact panel timings** for maximum compatibility (OLED)
 - **No crashing issues** like the old binary patching method had
 - **Easy one-command install and uninstall**
 
 ## Requirements
 
-- Steam Deck OLED with **BOE panel** (0x3004) or **Samsung panel** (0x3003)
-  - **Limited Edition (orange thumbsticks, translucent shell)**: Always has BOE panel
-  - **Limited Edition (white)**: Has Samsung panel
-  - **Standard OLED**: May have either BOE or Samsung (check with command below)
+- Steam Deck with one of:
+  - **BOE OLED panel** (0x3004) — up to 120Hz
+  - **Samsung OLED panel** (0x3003) — up to ~96Hz  
+  - **LCD panel** (0x3001) — up to 70Hz
 - **SteamOS 3.6 or newer**
+
+**OLED model guide:**
+- **Limited Edition (orange thumbsticks, translucent shell)**: Always has BOE panel
+- **Limited Edition (white)**: Has Samsung panel
+- **Standard OLED**: May have either BOE or Samsung (check with command below)
 
 ## Quick Install
 
@@ -37,40 +43,62 @@ The installer will:
 
 For **Samsung panels**, the installer automatically calculates a safe max (~96Hz) based on your panel's pixel clock with 10% headroom, giving you clean frame pacing multiples (96/48/24Hz) instead of the stock 90/45/22.5Hz.
 
-### Want a lower cap? (Recommended for best color accuracy)
+### Want better color accuracy?
 
-**Important:** There is slight gamma shift on OLED panels above ~110Hz. For the best balance between extra FPS and color accuracy, **109-110Hz is recommended** for most BOE panels.
-
-The SteamOS home screen / library always runs at the **highest** rate the script exposes — it doesn't honor the QAM slider. So if 120Hz makes the home screen colors look off (black crush, gamma shift), lower the cap at install time:
+There's slight gamma shift above ~110Hz. For best balance:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=110 bash
 ```
 
-> **Important:** The `MAX_REFRESH=110` MUST go on the `bash` side of the pipe, not before `curl`. If you write `MAX_REFRESH=110 curl ... | bash` the variable lives in `curl`'s environment and never reaches the install script — it'll silently fall back to 120.
+### Control home screen refresh rate separately
 
-`MAX_REFRESH` accepts any integer from 91 up to your panel's safe max. Common picks:
+By default, the home screen stays at 90Hz while games can use up to your max refresh rate. This avoids gamma issues on the UI while still giving you full speed in games.
+
+To run the home screen at a higher rate:
+
+```bash
+# 100Hz home, 120Hz games (experimental middle ground)
+curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | HOME_REFRESH=100 bash
+
+# Everything at 120Hz (may have gamma issues on home screen)
+curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | HOME_REFRESH=120 bash
+```
+
+You can combine both options:
+
+```bash
+# 100Hz home, 110Hz max for games
+curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/install.sh | MAX_REFRESH=110 HOME_REFRESH=100 bash
+```
+
+> **Important:** Environment variables MUST go on the `bash` side of the pipe, not before `curl`. If you write `MAX_REFRESH=110 curl ... | bash` the variable lives in `curl`'s environment and never reaches the install script.
+
+### Configuration options
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_REFRESH` | Auto-detected | Maximum refresh rate for games (91 to panel max) |
+| `HOME_REFRESH` | `90` | Home screen / UI refresh rate (45 to MAX_REFRESH) |
 
 **BOE panels (safe max: 120Hz):**
-- `120` (default) — full panel max
-- `110` — **recommended** best balance for color accuracy vs refresh rate
-- `100` — very conservative, minimal gamma shift
+- `MAX_REFRESH=120` (default) — full panel max
+- `MAX_REFRESH=110` — **recommended** best balance for color accuracy vs refresh rate
 
 **Samsung panels (safe max: ~96Hz):**
 - Auto-calculated (default) — installer picks the safe max for your panel
-- `96` — clean multiples: 96/48/24Hz
-- `92` — even more conservative
-
-> **Note:** The panel physically supports these refresh rates. Valve likely capped it at 90Hz for consistency with Samsung panels, battery life concerns, and the slight gamma shift above ~110Hz.
 
 > **Note:** If you specify a `MAX_REFRESH` above your panel's calculated safe max, the installer will warn you and ask for confirmation.
 
-You can verify the value that actually got installed:
+You can verify the values that got installed:
 ```bash
-grep MAX_REFRESH ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
+# For OLED:
+grep -E 'MAX_REFRESH|HOME_REFRESH' ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
+# For LCD:
+grep -E 'MAX_REFRESH|HOME_REFRESH' ~/.config/gamescope/scripts/99-user/displays/lcd-70hz.lua
 ```
 
-To change it later: re-run the installer with a different value, or edit that line directly in the installed file and reboot.
+To change settings later: re-run the installer with different values, or edit the file directly and reboot.
 
 ## Manual Install
 
@@ -100,7 +128,10 @@ curl -sL https://raw.githubusercontent.com/2-X/steamdeck-oled-120hz/main/uninsta
 
 ### Option 2: Manual removal
 ```bash
+# For OLED:
 rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
+# For LCD:
+rm ~/.config/gamescope/scripts/99-user/displays/lcd-70hz.lua
 sudo reboot
 ```
 
@@ -111,7 +142,10 @@ sudo reboot
 2. Boot to **Desktop Mode**: hold **Volume Down + Power**, then select Desktop Mode from the boot menu
 3. Open Konsole and run:
    ```bash
+   # For OLED:
    rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
+   # For LCD:
+   rm ~/.config/gamescope/scripts/99-user/displays/lcd-70hz.lua
    ```
 4. Run `sudo reboot` - your Deck will be back to normal
 
@@ -147,19 +181,21 @@ edid=$(xxd -p -l 12 /sys/class/drm/card*-eDP-1/edid | tr -d '\n'); echo ${edid:2
 ```
 - `04` = BOE OLED (supported — up to 120Hz)
 - `03` = Samsung OLED (supported — up to ~96Hz)
-- `01` = LCD (use [SteamDeck-RefreshRateUnlocker](https://github.com/ryanrudolfoba/SteamDeck-RefreshRateUnlocker) instead)
+- `01` = LCD (supported — up to 70Hz)
 
 **Quick guide by model:**
-- **Limited Edition (orange thumbsticks, translucent shell)**: BOE panel ✓
-- **Limited Edition (white)**: Samsung panel
+- **LCD Steam Deck**: LCD panel (70Hz)
+- **Limited Edition OLED (orange thumbsticks, translucent shell)**: BOE panel (120Hz)
+- **Limited Edition OLED (white)**: Samsung panel (~96Hz)
 - **Standard OLED**: Run the command above to check
 
 ### Is this safe?
 
-**Yes, for both BOE and Samsung panels.** The installer calculates safe limits based on your panel's actual pixel clock:
+**Yes, for all supported panels.** The installer calculates safe limits based on your panel's actual capabilities:
 
-- **BOE panels** can handle up to ~133Hz theoretically (we cap at 120Hz)
-- **Samsung panels** have tighter pixel clock limits (~99MHz), so we calculate the max safe refresh rate from your specific panel's timings — typically around 96-99Hz
+- **BOE OLED panels** can handle up to ~133Hz theoretically (we cap at 120Hz)
+- **Samsung OLED panels** have tighter pixel clock limits (~99MHz), so we calculate the max safe refresh rate from your specific panel's timings — typically around 96-99Hz
+- **LCD panels** are capped at 70Hz, which is a well-tested safe limit
 
 The Samsung calculation uses your panel's 90Hz pixel clock plus 10% headroom, capped at 99Hz absolute maximum. This gives you the benefit of cleaner frame pacing multiples (96/48/24Hz vs 90/45/22.5Hz) without exceeding hardware limits.
 

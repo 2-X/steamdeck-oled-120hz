@@ -24,12 +24,12 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 INSTALL_DIR="$HOME/.config/gamescope/scripts/99-user/displays"
-SCRIPT_NAME="oled-120hz.lua"
 
 # Panel type detection (set later)
 PANEL_TYPE=""
 PANEL_MAX_CLOCK=""
 SAFE_MAX_REFRESH=""
+SCRIPT_NAME=""
 
 # Top end of the refresh rate range to expose to gamescope. Override with:
 #   curl -sL https://.../install.sh | MAX_REFRESH=100 bash
@@ -41,13 +41,12 @@ SAFE_MAX_REFRESH=""
 MAX_REFRESH="${MAX_REFRESH:-}"
 
 # Home screen / UI refresh rate. Gamescope uses the LAST entry in the refresh
-# rate array as the idle/home target. By default we put 90Hz at the end so the
-# home screen stays at stock 90Hz (avoiding gamma issues some panels have at
-# higher rates), while games can still select up to MAX_REFRESH.
+# rate array as the idle/home target. By default we use stock rate (90Hz OLED,
+# 60Hz LCD) so the home screen stays at default while games can use higher rates.
 #
-# Set HOME_REFRESH=120 to make the home screen also run at max refresh.
-# Set HOME_REFRESH=100 for a middle ground (experimental).
-HOME_REFRESH="${HOME_REFRESH:-90}"
+# Set HOME_REFRESH to max to make the home screen also run at max refresh.
+# Default is set after panel detection.
+HOME_REFRESH="${HOME_REFRESH:-}"
 
 info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
@@ -57,9 +56,8 @@ die()   { error "$*"; exit 1; }
 
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║       Steam Deck OLED Refresh Rate Unlock - Installer         ║"
-echo "║       Supports BOE (120Hz) and Samsung (up to ~96Hz) panels   ║"
-echo "║       Home screen stays at 90Hz by default (configurable)     ║"
+echo "║         Steam Deck Refresh Rate Unlock - Installer            ║"
+echo "║   OLED: BOE (120Hz), Samsung (~96Hz)  •  LCD: up to 70Hz      ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -139,19 +137,13 @@ case "$PRODUCT_LO" in
         ok "Samsung OLED panel detected - will calculate safe max refresh"
         ;;
     01)
-        echo ""
-        error "LCD panel detected (product code 0x3001)"
-        echo ""
-        echo "This unlock is for OLED panels only. For LCD Steam Decks,"
-        echo "use the 70Hz unlock instead:"
-        echo "  https://github.com/ryanrudolfoba/SteamDeck-RefreshRateUnlocker"
-        echo ""
-        die "Installation aborted."
+        PANEL_TYPE="lcd"
+        ok "LCD panel detected - safe for 70Hz"
         ;;
     *)
         warn "Unknown panel type (product code: $PRODUCT_CODE)"
         echo ""
-        echo "This script expects BOE OLED (0x3004) or Samsung OLED (0x3003)."
+        echo "This script expects BOE OLED (0x3004), Samsung OLED (0x3003), or LCD (0x3001)."
         echo "Your panel code is unknown. Proceeding may cause display issues."
         echo ""
         read -p "Continue anyway? [y/N] " -n 1 -r
@@ -163,91 +155,97 @@ case "$PRODUCT_LO" in
         ;;
 esac
 
-# --- Step 4: Extract timing values ---
-info "Extracting panel timing values..."
+# --- Step 4: Extract timing values (OLED only) ---
+# LCD doesn't need custom timings - it just extends the refresh rate array
 
-# Try modetest first (more reliable), fall back to xrandr
-TIMINGS=""
+if [[ "$PANEL_TYPE" != "lcd" ]]; then
+    info "Extracting panel timing values..."
 
-if command -v modetest >/dev/null 2>&1; then
-    # modetest output format (line starting with #0 is preferred mode):
-    # #0 800x1280 90.06 800 818 822 858 1280 1288 1290 1320 102000 flags: ...
-    TIMINGS=$(sudo modetest -M amdgpu -c 2>/dev/null | \
-        awk '/eDP-1/,/props:/' | \
-        grep '#0' | \
-        head -1)
-fi
+    # Try modetest first (more reliable), fall back to xrandr
+    TIMINGS=""
 
-if [[ -z "$TIMINGS" ]] && command -v xrandr >/dev/null 2>&1; then
-    warn "modetest unavailable, trying xrandr..."
-    # xrandr --verbose output is more complex, need different parsing
-    # Format: h: width 800 start 818 end 822 total 858 ...
-    #         v: height 1280 start 1288 end 1290 total 1320 ...
-    XRANDR_OUT=$(xrandr --verbose 2>/dev/null | awk '/eDP-1/,/^[A-Z]/' | head -20)
-    
-    H_LINE=$(echo "$XRANDR_OUT" | grep 'h:' | head -1)
-    V_LINE=$(echo "$XRANDR_OUT" | grep 'v:' | head -1)
-    
-    if [[ -n "$H_LINE" ]] && [[ -n "$V_LINE" ]]; then
-        # Parse xrandr format
-        HDISPLAY=$(echo "$H_LINE" | awk '{print $3}')
-        HSS=$(echo "$H_LINE" | awk '{print $5}')
-        HSE=$(echo "$H_LINE" | awk '{print $7}')
-        HTOTAL=$(echo "$H_LINE" | awk '{print $9}')
-        
-        VDISPLAY=$(echo "$V_LINE" | awk '{print $3}')
-        VSS=$(echo "$V_LINE" | awk '{print $5}')
-        VSE=$(echo "$V_LINE" | awk '{print $7}')
-        VTOTAL=$(echo "$V_LINE" | awk '{print $9}')
-        
-        # Construct fake modetest-style line for unified parsing below
-        TIMINGS="#0 ${HDISPLAY}x${VDISPLAY} 90.00 $HDISPLAY $HSS $HSE $HTOTAL $VDISPLAY $VSS $VSE $VTOTAL 102000"
+    if command -v modetest >/dev/null 2>&1; then
+        # modetest output format (line starting with #0 is preferred mode):
+        # #0 800x1280 90.06 800 818 822 858 1280 1288 1290 1320 102000 flags: ...
+        TIMINGS=$(sudo modetest -M amdgpu -c 2>/dev/null | \
+            awk '/eDP-1/,/props:/' | \
+            grep '#0' | \
+            head -1)
     fi
+
+    if [[ -z "$TIMINGS" ]] && command -v xrandr >/dev/null 2>&1; then
+        warn "modetest unavailable, trying xrandr..."
+        # xrandr --verbose output is more complex, need different parsing
+        # Format: h: width 800 start 818 end 822 total 858 ...
+        #         v: height 1280 start 1288 end 1290 total 1320 ...
+        XRANDR_OUT=$(xrandr --verbose 2>/dev/null | awk '/eDP-1/,/^[A-Z]/' | head -20)
+        
+        H_LINE=$(echo "$XRANDR_OUT" | grep 'h:' | head -1)
+        V_LINE=$(echo "$XRANDR_OUT" | grep 'v:' | head -1)
+        
+        if [[ -n "$H_LINE" ]] && [[ -n "$V_LINE" ]]; then
+            # Parse xrandr format
+            HDISPLAY=$(echo "$H_LINE" | awk '{print $3}')
+            HSS=$(echo "$H_LINE" | awk '{print $5}')
+            HSE=$(echo "$H_LINE" | awk '{print $7}')
+            HTOTAL=$(echo "$H_LINE" | awk '{print $9}')
+            
+            VDISPLAY=$(echo "$V_LINE" | awk '{print $3}')
+            VSS=$(echo "$V_LINE" | awk '{print $5}')
+            VSE=$(echo "$V_LINE" | awk '{print $7}')
+            VTOTAL=$(echo "$V_LINE" | awk '{print $9}')
+            
+            # Construct fake modetest-style line for unified parsing below
+            TIMINGS="#0 ${HDISPLAY}x${VDISPLAY} 90.00 $HDISPLAY $HSS $HSE $HTOTAL $VDISPLAY $VSS $VSE $VTOTAL 102000"
+        fi
+    fi
+
+    if [[ -z "$TIMINGS" ]]; then
+        die "Could not extract panel timings. Neither modetest nor xrandr provided valid data."
+    fi
+
+    info "Raw timing data: $TIMINGS"
+
+    # Parse modetest format:
+    # #0 800x1280 90.06 800 818 822 858 1280 1288 1290 1320 102000 flags: ...
+    # Fields: index resolution refresh hdisplay hss hse htot vdisplay vss vse vtot clock
+    read -r _ _ REFRESH_RATE HDISPLAY HSS HSE HTOTAL VDISPLAY VSS VSE VTOTAL PIXEL_CLOCK _ <<< "$TIMINGS"
+
+    # Calculate timing parameters
+    H_FP=$((HSS - HDISPLAY))
+    H_SYNC=$((HSE - HSS))
+    H_BP=$((HTOTAL - HSE))
+
+    V_FP=$((VSS - VDISPLAY))
+    V_SYNC=$((VSE - VSS))
+    V_BP=$((VTOTAL - VSE))
+
+    echo ""
+    info "Calculated timing values:"
+    echo "  Horizontal: FP=$H_FP  SYNC=$H_SYNC  BP=$H_BP  (total=$HTOTAL)"
+    echo "  Vertical:   FP=$V_FP  SYNC=$V_SYNC  BP=$V_BP  (total=$VTOTAL)"
+    echo "  Pixel clock at ${REFRESH_RATE}Hz: ${PIXEL_CLOCK} kHz"
+    echo ""
+
+    # Sanity check values
+    if [[ $H_FP -le 0 ]] || [[ $H_SYNC -le 0 ]] || [[ $H_BP -le 0 ]] || \
+       [[ $V_FP -le 0 ]] || [[ $V_SYNC -le 0 ]] || [[ $V_BP -le 0 ]]; then
+        die "Timing values look invalid. Please report this issue with your modetest output."
+    fi
+
+    ok "Timing values extracted successfully"
+else
+    info "LCD panel - skipping timing extraction (not needed)"
 fi
-
-if [[ -z "$TIMINGS" ]]; then
-    die "Could not extract panel timings. Neither modetest nor xrandr provided valid data."
-fi
-
-info "Raw timing data: $TIMINGS"
-
-# Parse modetest format:
-# #0 800x1280 90.06 800 818 822 858 1280 1288 1290 1320 102000 flags: ...
-# Fields: index resolution refresh hdisplay hss hse htot vdisplay vss vse vtot clock
-read -r _ _ REFRESH_RATE HDISPLAY HSS HSE HTOTAL VDISPLAY VSS VSE VTOTAL PIXEL_CLOCK _ <<< "$TIMINGS"
-
-# Calculate timing parameters
-H_FP=$((HSS - HDISPLAY))
-H_SYNC=$((HSE - HSS))
-H_BP=$((HTOTAL - HSE))
-
-V_FP=$((VSS - VDISPLAY))
-V_SYNC=$((VSE - VSS))
-V_BP=$((VTOTAL - VSE))
-
-echo ""
-info "Calculated timing values:"
-echo "  Horizontal: FP=$H_FP  SYNC=$H_SYNC  BP=$H_BP  (total=$HTOTAL)"
-echo "  Vertical:   FP=$V_FP  SYNC=$V_SYNC  BP=$V_BP  (total=$VTOTAL)"
-echo "  Pixel clock at ${REFRESH_RATE}Hz: ${PIXEL_CLOCK} kHz"
-echo ""
-
-# Sanity check values
-if [[ $H_FP -le 0 ]] || [[ $H_SYNC -le 0 ]] || [[ $H_BP -le 0 ]] || \
-   [[ $V_FP -le 0 ]] || [[ $V_SYNC -le 0 ]] || [[ $V_BP -le 0 ]]; then
-    die "Timing values look invalid. Please report this issue with your modetest output."
-fi
-
-ok "Timing values extracted successfully"
 
 # --- Step 5: Calculate safe max refresh rate ---
 info "Calculating safe refresh rate limits..."
 
-# pixel_clock (kHz) = htotal * vtotal * refresh / 1000
-# refresh = pixel_clock * 1000 / (htotal * vtotal)
-TOTAL_PIXELS=$((HTOTAL * VTOTAL))
-
-if [[ "$PANEL_TYPE" == "boe" ]]; then
+if [[ "$PANEL_TYPE" == "lcd" ]]; then
+    # LCD panels cap at 70Hz
+    SAFE_MAX_REFRESH=70
+    ok "LCD panel: safe max = 70Hz"
+elif [[ "$PANEL_TYPE" == "boe" ]]; then
     # BOE panels can handle up to ~133Hz theoretically, we cap at 120
     SAFE_MAX_REFRESH=120
     ok "BOE panel: safe max = 120Hz"
@@ -258,6 +256,10 @@ elif [[ "$PANEL_TYPE" == "samsung" ]]; then
     # Calculate: max_clock = stock_clock * 1.10 (10% headroom)
     #            safe_refresh = floor(max_clock * 1000 / total_pixels)
     #            final = min(safe_refresh, 99)
+    
+    # pixel_clock (kHz) = htotal * vtotal * refresh / 1000
+    # refresh = pixel_clock * 1000 / (htotal * vtotal)
+    TOTAL_PIXELS=$((HTOTAL * VTOTAL))
     
     # Stock clock with 10% headroom
     MAX_CLOCK_KHZ=$(( (PIXEL_CLOCK * 110) / 100 ))
@@ -282,6 +284,13 @@ else
 fi
 
 # Now validate/set MAX_REFRESH
+# LCD starts at 61 (stock is 60), OLED starts at 91 (stock is 90)
+if [[ "$PANEL_TYPE" == "lcd" ]]; then
+    MIN_REFRESH=61
+else
+    MIN_REFRESH=91
+fi
+
 if [[ -z "$MAX_REFRESH" ]]; then
     # No override specified, use calculated safe max
     MAX_REFRESH=$SAFE_MAX_REFRESH
@@ -292,8 +301,8 @@ else
         die "MAX_REFRESH must be an integer (got: $MAX_REFRESH)"
     fi
     
-    if [[ "$MAX_REFRESH" -lt 91 ]]; then
-        die "MAX_REFRESH must be at least 91 (got: $MAX_REFRESH)"
+    if [[ "$MAX_REFRESH" -lt "$MIN_REFRESH" ]]; then
+        die "MAX_REFRESH must be at least $MIN_REFRESH (got: $MAX_REFRESH)"
     fi
     
     if [[ "$MAX_REFRESH" -gt "$SAFE_MAX_REFRESH" ]]; then
@@ -312,19 +321,30 @@ else
     fi
 fi
 
+# Set HOME_REFRESH default based on panel type
+if [[ "$PANEL_TYPE" == "lcd" ]]; then
+    DEFAULT_HOME_REFRESH=60
+else
+    DEFAULT_HOME_REFRESH=90
+fi
+
+if [[ -z "$HOME_REFRESH" ]]; then
+    HOME_REFRESH=$DEFAULT_HOME_REFRESH
+fi
+
 # Validate HOME_REFRESH
 if ! [[ "$HOME_REFRESH" =~ ^[0-9]+$ ]]; then
     die "HOME_REFRESH must be an integer (got: $HOME_REFRESH)"
 fi
 
-if [[ "$HOME_REFRESH" -lt 45 ]] || [[ "$HOME_REFRESH" -gt "$MAX_REFRESH" ]]; then
-    die "HOME_REFRESH must be between 45 and MAX_REFRESH ($MAX_REFRESH). Got: $HOME_REFRESH"
+if [[ "$HOME_REFRESH" -lt 40 ]] || [[ "$HOME_REFRESH" -gt "$MAX_REFRESH" ]]; then
+    die "HOME_REFRESH must be between 40 and MAX_REFRESH ($MAX_REFRESH). Got: $HOME_REFRESH"
 fi
 
-if [[ "$HOME_REFRESH" -eq 90 ]]; then
-    info "Home screen will stay at stock 90Hz (default)"
-elif [[ "$HOME_REFRESH" -gt 90 ]]; then
-    info "Home screen will run at ${HOME_REFRESH}Hz (experimental - may have gamma issues)"
+if [[ "$HOME_REFRESH" -eq "$DEFAULT_HOME_REFRESH" ]]; then
+    info "Home screen will stay at stock ${DEFAULT_HOME_REFRESH}Hz (default)"
+elif [[ "$HOME_REFRESH" -gt "$DEFAULT_HOME_REFRESH" ]]; then
+    info "Home screen will run at ${HOME_REFRESH}Hz"
 else
     info "Home screen will run at ${HOME_REFRESH}Hz"
 fi
@@ -334,22 +354,79 @@ info "Installing refresh rate unlock script..."
 
 mkdir -p "$INSTALL_DIR"
 
+# Determine which gamescope profile and script name to use based on panel type
+if [[ "$PANEL_TYPE" == "lcd" ]]; then
+    GAMESCOPE_PROFILE="steamdeck_lcd"
+    PROFILE_DISPLAY_NAME="LCD"
+    SCRIPT_NAME="lcd-70hz.lua"
+elif [[ "$PANEL_TYPE" == "samsung" ]]; then
+    GAMESCOPE_PROFILE="steamdeck_oled_sdc"
+    PROFILE_DISPLAY_NAME="Samsung OLED"
+    SCRIPT_NAME="oled-120hz.lua"
+else
+    GAMESCOPE_PROFILE="steamdeck_oled_boe"
+    PROFILE_DISPLAY_NAME="BOE OLED"
+    SCRIPT_NAME="oled-120hz.lua"
+fi
+
 # Check for existing file
 if [[ -f "$INSTALL_DIR/$SCRIPT_NAME" ]]; then
     warn "Existing $SCRIPT_NAME found, backing up to ${SCRIPT_NAME}.bak"
     cp "$INSTALL_DIR/$SCRIPT_NAME" "$INSTALL_DIR/${SCRIPT_NAME}.bak"
 fi
 
-# Determine which gamescope profile to use based on panel type
-if [[ "$PANEL_TYPE" == "samsung" ]]; then
-    GAMESCOPE_PROFILE="steamdeck_oled_sdc"
-    PROFILE_DISPLAY_NAME="Samsung OLED"
-else
-    GAMESCOPE_PROFILE="steamdeck_oled_boe"
-    PROFILE_DISPLAY_NAME="BOE OLED"
-fi
+# Generate panel-specific Lua script
+if [[ "$PANEL_TYPE" == "lcd" ]]; then
+    # LCD script - simpler, just extends refresh rates (no custom modegen needed)
+    cat > "$INSTALL_DIR/$SCRIPT_NAME" << LUAEOF
+-- Steam Deck LCD refresh rate unlock for gamescope (SteamOS 3.6+)
+-- Auto-generated by install.sh
+-- Uninstall: rm ~/.config/gamescope/scripts/99-user/displays/lcd-70hz.lua
+--
+-- Panel type: LCD
+-- Max refresh: ${MAX_REFRESH}Hz
+-- Home screen rate: ${HOME_REFRESH}Hz
 
-cat > "$INSTALL_DIR/$SCRIPT_NAME" << LUAEOF
+local panel = gamescope.config.known_displays.$GAMESCOPE_PROFILE
+if not panel then
+    if warn then
+        warn("[lcd-70hz] $GAMESCOPE_PROFILE profile not found; skipping.")
+    end
+    return
+end
+
+local MAX_REFRESH = $MAX_REFRESH
+local HOME_REFRESH = $HOME_REFRESH
+
+-- Gamescope uses the LAST entry as the idle/home target.
+-- Rebuild array: stock rates (minus HOME_REFRESH) + extended rates + HOME_REFRESH at end
+
+local stock_rates = {}
+for i, r in ipairs(panel.dynamic_refresh_rates) do
+    if r ~= HOME_REFRESH then
+        table.insert(stock_rates, r)
+    end
+end
+
+panel.dynamic_refresh_rates = {}
+for _, r in ipairs(stock_rates) do
+    table.insert(panel.dynamic_refresh_rates, r)
+end
+for r = 61, MAX_REFRESH do
+    if r ~= HOME_REFRESH then
+        table.insert(panel.dynamic_refresh_rates, r)
+    end
+end
+table.insert(panel.dynamic_refresh_rates, HOME_REFRESH)
+
+if debug then
+    debug("[lcd-70hz] LCD refresh unlock active (max: " .. MAX_REFRESH .. "Hz, home: " .. HOME_REFRESH .. "Hz)")
+end
+LUAEOF
+
+else
+    # OLED script - includes custom modegen for higher refresh rates
+    cat > "$INSTALL_DIR/$SCRIPT_NAME" << LUAEOF
 -- Steam Deck OLED refresh rate unlock for gamescope (SteamOS 3.6+)
 -- Auto-generated by install.sh with your panel's exact timings.
 -- Uninstall: rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua
@@ -445,6 +522,7 @@ if debug then
     debug("[oled-120hz] $PROFILE_DISPLAY_NAME refresh unlock active (max: " .. MAX_REFRESH .. "Hz, home: " .. HOME_REFRESH .. "Hz)")
 end
 LUAEOF
+fi
 
 # Verify installation
 if [[ ! -f "$INSTALL_DIR/$SCRIPT_NAME" ]]; then
@@ -476,22 +554,28 @@ echo "Samsung panel detected! Your refresh rate is capped at ${MAX_REFRESH}Hz fo
 echo "This gives you clean frame pacing multiples (${MAX_REFRESH}/$((MAX_REFRESH/2))/$((MAX_REFRESH/4))Hz)."
 echo ""
 fi
-if [[ "$HOME_REFRESH" -eq 90 ]]; then
-echo "Home screen will stay at stock 90Hz (avoiding potential gamma issues)."
+if [[ "$HOME_REFRESH" -eq "$DEFAULT_HOME_REFRESH" ]]; then
+echo "Home screen will stay at stock ${DEFAULT_HOME_REFRESH}Hz."
 echo "Games can still select up to ${MAX_REFRESH}Hz via the QAM slider."
-echo ""
-echo "To run the home screen at a higher rate (experimental):"
-echo "  curl -sL .../install.sh | HOME_REFRESH=100 bash"
 echo ""
 else
 echo "Home screen will run at ${HOME_REFRESH}Hz."
-echo "If home screen colors look off, reinstall with HOME_REFRESH=90 (default)."
+echo "If you have issues, reinstall with HOME_REFRESH=${DEFAULT_HOME_REFRESH} (default)."
 echo ""
 fi
 echo "Configuration options (env vars go on the 'bash' side of the pipe):"
 echo "  MAX_REFRESH=N   - Max refresh rate for games (default: auto-detected)"
-echo "  HOME_REFRESH=N  - Home screen refresh rate (default: 90)"
+echo "  HOME_REFRESH=N  - Home screen refresh rate (default: ${DEFAULT_HOME_REFRESH})"
 echo ""
+if [[ "$PANEL_TYPE" == "lcd" ]]; then
+echo "Examples:"
+echo "  # 65Hz max (conservative)"
+echo "  curl -sL .../install.sh | MAX_REFRESH=65 bash"
+echo ""
+echo "  # 70Hz everywhere including home screen"
+echo "  curl -sL .../install.sh | HOME_REFRESH=70 bash"
+echo ""
+else
 echo "Examples:"
 echo "  # Max out everything (may have gamma issues on home screen)"
 echo "  curl -sL .../install.sh | MAX_REFRESH=120 HOME_REFRESH=120 bash"
@@ -499,8 +583,9 @@ echo ""
 echo "  # 100Hz home, 120Hz games (experimental middle ground)"
 echo "  curl -sL .../install.sh | HOME_REFRESH=100 bash"
 echo ""
+fi
 echo "To uninstall:"
-echo "  rm ~/.config/gamescope/scripts/99-user/displays/oled-120hz.lua"
+echo "  rm ~/.config/gamescope/scripts/99-user/displays/$SCRIPT_NAME"
 echo "  sudo reboot"
 echo ""
 echo "If your screen goes black after reboot:"

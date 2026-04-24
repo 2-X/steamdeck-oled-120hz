@@ -1,47 +1,53 @@
 #!/bin/bash
 #
-# Steam Deck OLED 120Hz Unlock - Uninstaller
+# Steam Deck Refresh Rate Unlock - Uninstaller
 #
-# Removes the 120Hz unlock script and restores stock 90Hz behavior.
+# Removes the refresh rate unlock script and restores stock behavior.
 
 set -euo pipefail
 
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-SCRIPT_PATH="$HOME/.config/gamescope/scripts/99-user/displays/oled-120hz.lua"
-BACKUP_PATH="${SCRIPT_PATH}.bak"
+INSTALL_DIR="$HOME/.config/gamescope/scripts/99-user/displays"
+OLED_SCRIPT="$INSTALL_DIR/oled-120hz.lua"
+LCD_SCRIPT="$INSTALL_DIR/lcd-70hz.lua"
 
 info() { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 
 echo ""
-echo "Steam Deck OLED 120Hz Unlock - Uninstaller"
-echo "==========================================="
+echo "Steam Deck Refresh Rate Unlock - Uninstaller"
+echo "============================================="
 echo ""
 
-if [[ -f "$SCRIPT_PATH" ]]; then
-    rm -f "$SCRIPT_PATH"
-    ok "Removed: $SCRIPT_PATH"
-else
-    info "Script not found at $SCRIPT_PATH (already uninstalled?)"
-fi
+FOUND=0
 
-if [[ -f "$BACKUP_PATH" ]]; then
-    rm -f "$BACKUP_PATH"
-    ok "Removed backup: $BACKUP_PATH"
+for script in "$OLED_SCRIPT" "$LCD_SCRIPT"; do
+    if [[ -f "$script" ]]; then
+        rm -f "$script"
+        ok "Removed: $script"
+        FOUND=1
+    fi
+    if [[ -f "${script}.bak" ]]; then
+        rm -f "${script}.bak"
+        ok "Removed backup: ${script}.bak"
+    fi
+done
+
+if [[ $FOUND -eq 0 ]]; then
+    info "No unlock scripts found (already uninstalled?)"
 fi
 
 # Clean up empty directories
-rmdir "$HOME/.config/gamescope/scripts/99-user/displays" 2>/dev/null || true
+rmdir "$INSTALL_DIR" 2>/dev/null || true
 rmdir "$HOME/.config/gamescope/scripts/99-user" 2>/dev/null || true
 
 echo ""
 ok "Uninstallation complete."
 echo ""
-echo "Reboot your Steam Deck to restore stock 90Hz refresh rate cap."
+echo "Reboot your Steam Deck to restore stock refresh rate."
 echo ""
 
 read -p "Reboot now? [Y/n] " -n 1 -r
